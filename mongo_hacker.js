@@ -38,7 +38,7 @@ if ( ver[0] <= parseInt("2") && ver[1] < parseInt("2") ) {
 
 setVerboseShell(true);
 setIndexParanoia(true);
-setAutoMulti(true);
+setAutoMulti(false);
 
 __indent = "  "
 
@@ -48,7 +48,7 @@ function setIndexParanoia( value ) {
 }
 
 function setAutoMulti( value ) { 
-    if( value == undefined ) value = true; 
+    if( value == undefined ) value = false;
     _autoMulti = value; 
 }
 
@@ -286,7 +286,7 @@ DBCollection.prototype.update = function( query , obj , upsert, multi ) {
     }
 
     this._db._initExtraInfo();
-    this._mongo.update( this._fullName , query , obj , upsert ? true : false , _autoMulti ? true : multi );
+    this._mongo.update( this._fullName , query , obj , upsert ? true : false , _autoMulti ? false : multi );
     this._db._getExtraInfo("Updated");
 }
 
