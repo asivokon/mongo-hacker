@@ -9,6 +9,8 @@
  *
  */
 
+__indent = "  "
+
 __ansi = {
     csi: String.fromCharCode(0x1B) + '[',
     reset: '0',
@@ -27,34 +29,9 @@ __ansi = {
     }
 }
 
-if (_isWindows()) {
-  print("\nSorry! MongoDB Shell Enhancements for Hackers isn't compatible with Windows.\n");
-}
-
-var ver = db.version().split(".");
-if ( ver[0] <= parseInt("2") && ver[1] < parseInt("2") ) {
-  print(colorize("\nSorry! Mongo version 2.2.x and above is required! Please upgrade.\n", "red", true));
-} 
-
-setVerboseShell(true);
-setIndexParanoia(true);
-setAutoMulti(false);
-
-__indent = "  "
-
-function setIndexParanoia( value ) { 
-    if( value == undefined ) value = true; 
-    _indexParanoia = value; 
-}
-
-function setAutoMulti( value ) { 
-    if( value == undefined ) value = false;
-    _autoMulti = value; 
-}
-
 function controlCode( parameters ) {
     if ( parameters == undefined ) {
-    	parameters = "";
+        parameters = "";
     }
     else if (typeof(parameters) == 'object' && (parameters instanceof Array)) {
         parameters = parameters.join(';');
@@ -79,12 +56,223 @@ function colorize( string, color, bright, underline ) {
     return applyColorCode( string, params );
 }
 
+// Improve the default prompt with hostname, process type, and version
+prompt = function() {
+    var serverstatus = db.serverStatus();
+    var host = serverstatus.host.split('.')[0];
+    var process = serverstatus.process;
+    var version = db.serverBuildInfo().version;
+    return host + '(' + process + '-' + version + ') ' + db + '> ';
+}
+
+function getEnv(env){
+    clearRawMongoProgramOutput();
+    run('env');
+    var env = rawMongoProgramOutput();
+    return env.match(/HOME=(.*)/)[1];
+}
+
+if (_isWindows()) {
+  print("\nSorry! MongoDB Shell Enhancements for Hackers isn't compatible with Windows.\n");
+}
+
+var ver = db.version().split(".");
+if ( ver[0] <= parseInt("2") && ver[1] < parseInt("2") ) {
+  print(colorize("\nSorry! Mongo version 2.2.x and above is required! Please upgrade.\n", "red", true));
+}
+
+setVerboseShell(true);
+setIndexParanoia(true);
+setAutoMulti(false);
+
+function setIndexParanoia( value ) { 
+    if( value == undefined ) value = true; 
+    _indexParanoia = value; 
+}
+
+function setAutoMulti( value ) { 
+    if( value == undefined ) value = false;
+    _autoMulti = value; 
+}
+
+DBCollection.prototype.all = function() {
+    return new DBQuery( this._mongo , this._db , this , this._fullName );
+}
+
+DBCollection.prototype.filter = function( filter ) {
+    var cursor = new DBQuery( this._mongo , this._db , this , this._fullName , this._massageObject( filter ) );
+    return cursor;
+}
+
+DBCollection.prototype.where = function( filter ) {
+    return this.filter(filter)
+}
+
+DBCollection.prototype.one = function( filter ) {
+    return this.filter(filter)[0];
+}
+
+DBCollection.prototype.update = function( update ) {
+    var cursor = new DBQuery( this._mongo , this._db , this , this._fullName );
+    cursor.update(update);
+}
+
+DBQuery.prototype._massageObject = function( q ){
+    if ( ! q )
+        return {};
+
+    var type = typeof q;
+
+    if ( type == "function" )
+        return { $where : q };
+
+    if ( q.isObjectId )
+        return { _id : q };
+
+    if ( type == "object" )
+        return q;
+
+    if ( type == "string" ){
+        if ( q.length == 24 )
+            return { _id : q };
+
+        return { $where : q };
+    }
+
+    throw "don't know how to massage : " + type;
+
+}
+
+DBQuery.prototype.filter = function( filter ) {
+    this._query = this._massageObject(filter);
+    return this;
+}
+
+DBQuery.prototype.one = function() {
+    return this.limit(1)[0];
+}
+
+DBQuery.prototype._validateObject = function( o ){
+    if (typeof(o) != "object")
+        throw "attempted to save a " + typeof(o) + " value.  document expected.";
+
+    if ( o._ensureSpecial && o._checkModify )
+        throw "can't save a DBQuery object";
+}
+
+DBQuery.prototype._validateForStorage = function( o ){
+    this._validateObject( o );
+    for ( var k in o ){
+        if ( k.indexOf( "." ) >= 0 ) {
+            throw "can't have . in field names [" + k + "]" ;
+        }
+
+        if ( k.indexOf( "$" ) == 0 && ! DBCollection._allowedFields[k] ) {
+            throw "field names cannot start with $ [" + k + "]";
+        }
+
+        if ( o[k] !== null && typeof( o[k] ) === "object" ) {
+            this._validateForStorage( o[k] );
+        }
+    }
+};
+
+DBQuery.prototype.upsert = function( upsert ){
+    assert( upsert , "need an object" );
+
+    var firstKey = null;
+    for (var k in upsert) { firstKey = k; break; }
+
+    if (firstKey != null && firstKey[0] == '$') {
+        // for mods we only validate partially, for example keys may have dots
+        this._validateObject( upsert );
+    } else {
+        // we're basically inserting a brand new object, do full validation
+        this._validateForStorage( upsert );
+    }
+
+    this._db._initExtraInfo();
+    this._mongo.update( this._ns , this._query , upsert , true , false );
+    // might want this to be Upserted...
+    this._db._getExtraInfo("Updated");
+}
+
+DBQuery.prototype.update = function( update ){
+    assert( update , "need an object" );
+
+    var firstKey = null;
+    for (var k in update) { firstKey = k; break; }
+
+    if (firstKey != null && firstKey[0] == '$') {
+        // for mods we only validate partially, for example keys may have dots
+        this._validateObject( update );
+    } else {
+        // we're basically inserting a brand new object, do full validation
+        this._validateForStorage( update );
+    }
+
+    this._db._initExtraInfo();
+    this._mongo.update( this._ns , this._query , update , false , true );
+    this._db._getExtraInfo("Updated");
+}
+
+DBQuery.prototype.remove = function(){
+    for ( var k in this._query ){
+        if ( k == "_id" && typeof( this._query[k] ) == "undefined" ){
+            throw "can't have _id set to undefined in a remove expression"
+        }
+    }
+    this._db._initExtraInfo();
+    this._mongo.remove( this._ns , this._massageObject( this._query ) , false );
+    this._db._getExtraInfo("Removed");
+}
+
+DBQuery.prototype.select = function( fields ){
+    this._fields = fields;
+    return this;
+}
+
+DBQuery.prototype.all = function() {
+    return this;
+}
+
 ObjectId.prototype.toString = function() {
     return this.str;
 }
 
 ObjectId.prototype.tojson = function(indent, nolint) {
     return tojson(this);
+}
+
+// Override group because map/reduce style is deprecated
+DBCollection.prototype.agg_group = function( name, group_field, operation, op_value, filter ) {
+    var ops = [];
+    var group_op = { $group: { _id: '$' + group_field } };
+
+    if (filter != undefined) {
+        ops.push({ '$match': filter })
+    }
+  
+    group_op['$group'][name] = { };
+    group_op['$group'][name]['$' + operation] = op_value
+    ops.push(group_op);
+
+    return this.aggregate(ops);
+}
+
+// Function that groups and counts by group after applying filter
+DBCollection.prototype.gcount = function( group_field, filter ) {
+    return this.agg_group('count', group_field, 'sum', 1, filter);
+}
+
+// Function that groups and sums sum_field after applying filter
+DBCollection.prototype.gsum = function( group_field, sum_field, filter ) {
+    return this.agg_group('sum', group_field, 'sum', '$' + sum_field, filter);
+}
+
+// Function that groups and averages avg_feld after applying filter
+DBCollection.prototype.gavg = function( group_field, avg_field, filter ) {
+    return this.agg_group('avg', group_field, 'avg', '$' + avg_field, filter);
 }
 
 Date.prototype.tojson = function() {
@@ -258,76 +446,6 @@ tojsonObject = function( x, indent , nolint ) {
     // pop one level of indent
     indent = indent.substring(__indent.length);
     return s + indent + "}";
-}
-
-// Hardcode multi update -- now you only need to remember upsert
-DBCollection.prototype.update = function( query , obj , upsert, multi ) {
-    assert( query , "need a query" );
-    assert( obj , "need an object" );
-
-    var firstKey = null;
-    for (var k in obj) { firstKey = k; break; }
-
-    if (firstKey != null && firstKey[0] == '$') {
-        // for mods we only validate partially, for example keys may have dots
-        this._validateObject( obj );
-    } else {
-        // we're basically inserting a brand new object, do full validation
-        this._validateForStorage( obj );
-    }
-
-    // can pass options via object for improved readability    
-    if ( typeof(upsert) === 'object' ) {
-        assert( multi === undefined, "Fourth argument must be empty when specifying upsert and multi with an object." );
-
-        opts = upsert;
-        multi = opts.multi;
-        upsert = opts.upsert;
-    }
-
-    this._db._initExtraInfo();
-    this._mongo.update( this._fullName , query , obj , upsert ? true : false , _autoMulti ? false : multi );
-    this._db._getExtraInfo("Updated");
-}
-
-// Override group because map/reduce style is deprecated
-DBCollection.prototype.agg_group = function( name, group_field, operation, op_value, filter ) {
-    var ops = [];
-    var group_op = { $group: { _id: '$' + group_field } };
-
-    if (filter != undefined) {
-        ops.push({ '$match': filter })
-    }
-  
-    group_op['$group'][name] = { };
-    group_op['$group'][name]['$' + operation] = op_value
-    ops.push(group_op);
-
-    return this.aggregate(ops);
-}
-
-// Function that groups and counts by group after applying filter
-DBCollection.prototype.gcount = function( group_field, filter ) {
-    return this.agg_group('count', group_field, 'sum', 1, filter);
-}
-
-// Function that groups and sums sum_field after applying filter
-DBCollection.prototype.gsum = function( group_field, sum_field, filter ) {
-    return this.agg_group('sum', group_field, 'sum', '$' + sum_field, filter);
-}
-
-// Function that groups and averages avg_feld after applying filter
-DBCollection.prototype.gavg = function( group_field, avg_field, filter ) {
-    return this.agg_group('avg', group_field, 'avg', '$' + avg_field, filter);
-}
-
-// Improve the default prompt with hostname, process type, and version
-prompt = function() {
-    var serverstatus = db.serverStatus();
-    var host = serverstatus.host.split('.')[0];
-    var process = serverstatus.process;
-    var version = db.serverBuildInfo().version;
-    return host + '(' + process + '-' + version + ') ' + db + '> ';
 }
 
 DBQuery.prototype.shellPrint = function(){

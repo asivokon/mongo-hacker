@@ -18,7 +18,7 @@ Note: This currently only works with the v2.2+ of shell (which you can use with 
 
 ## List of Enhancements
 
-### Basic
+### Shell
 
 Verbose shell is enabled by default -- to disable: `setVerboseShell(false)`
 
@@ -26,7 +26,14 @@ Disable notfication of "Type 'it' for more"
 
 Custom prompt with `hostname(process-version) db>` formating
 
-### Awesome
+### API
+
+Aggregation Framework Helpers -- on collections
+- Group and Count: `gcount(group_field, filter)`
+- Group and Sum: `gsum(group_field, sum_field, filter)`
+- Group and Average: `gavg(group_field, avg_field, filter)`
+
+### Color
 
 Colorized query output
 
@@ -39,6 +46,8 @@ Colorized query output
 - Key: Yellow
 - Boolean: Blue
 - Date: Cyan
+
+### Usability
 
 Highlight querytime if verboseShell is enabled
   - In **green** if querytime is at or below slowms
@@ -57,8 +66,3 @@ AutoMulti
 db.users.update({}, {$set: {awesome: true}})
 Updated 4 existing record(s) in 1ms
 ```
-
-Aggregation Framework Helpers -- on collections
-- Group and Count: `gcount(group_field, filter)`
-- Group and Sum: `gsum(group_field, sum_field, filter)`
-- Group and Average: `gavg(group_field, avg_field, filter)`
